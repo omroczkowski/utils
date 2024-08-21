@@ -19,8 +19,22 @@ class DetectCycle(spark: SparkSession, df: DataFrame, idColumn: String, parentId
     Graph(verticesRDD, edgesRDD)
   }
 
-object GraphCyclicChecker {
-  def isCyclic(graph: Graph[_, _]): Boolean = {
+  // Create a Graph from a DataFrame with id and parent_id columns
+  def createGraphFromDataFrame(df: DataFrame): Graph[Int, Int] = {
+    // Convert DataFrame to RDD[VertexId] and RDD[Edge[Int]]
+    val vertices: RDD[(VertexId, Int)] = df.select("id").distinct()
+      .map(row => (row.getInt(0).toLong, 0)) // 0 is a placeholder for vertex attribute, adjust as needed
+
+    val edges: RDD[Edge[Int]] = df.select("id", "parent_id")
+      .rdd
+      .map(row => Edge(row.getInt(1).toLong, row.getInt(0).toLong, 1)) // 1 is a placeholder for edge attribute, adjust as needed
+
+    // Create the graph
+    Graph(vertices, edges)
+  }
+
+  // Check if the graph is cyclic
+  def isCyclic(graph: Graph[Int, Int]): Boolean = {
     // Compute Strongly Connected Components
     val sccGraph = graph.stronglyConnectedComponents(1)
     
@@ -37,4 +51,5 @@ object GraphCyclicChecker {
 
     hasCycle
   }
+}
 }

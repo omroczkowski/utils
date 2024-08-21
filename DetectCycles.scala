@@ -4,20 +4,25 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 
 class DetectCycle(spark: SparkSession, df: DataFrame, idColumn: String, parentIdColumn: String) {
 
-  import spark.implicits._
-
   // Create a Graph from a DataFrame with parameterized id and parent_id columns
   def createGraphFromDataFrame(df: DataFrame, idCol: String, parentIdCol: String): Graph[Int, Int] = {
     // Convert DataFrame to RDD[VertexId] and RDD[Edge[Int]]
-    val vertices: RDD[(VertexId, Int)] = df.select(idCol).distinct()
-      .map(row => (row.getAs[Int](idCol).toLong, 0)) // 0 is a placeholder for vertex attribute
-
-    val edges: RDD[Edge[Int]] = df.select(idCol, parentIdCol)
-      .rdd
-      .map(row => Edge(row.getAs[Int](parentIdCol).toLong, row.getAs[Int](idCol).toLong, 1)) // 1 is a placeholder for edge attribute
-
+    
+    // Extract vertices
+    val vertexRDD: RDD[(VertexId, Int)] = df.select(idCol).distinct().rdd.map { row =>
+      val id = row.getAs[Int](idCol).toLong
+      (id, 0) // 0 is a placeholder for vertex attribute
+    }
+    
+    // Extract edges
+    val edgeRDD: RDD[Edge[Int]] = df.select(idCol, parentIdCol).rdd.map { row =>
+      val srcId = row.getAs[Int](parentIdCol).toLong
+      val dstId = row.getAs[Int](idCol).toLong
+      Edge(srcId, dstId, 1) // 1 is a placeholder for edge attribute
+    }
+    
     // Create the graph
-    Graph(vertices, edges)
+    Graph(vertexRDD, edgeRDD)
   }
 
   // Check if the graph is cyclic

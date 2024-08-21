@@ -42,23 +42,21 @@ class DetectCycle(spark: SparkSession) {
     * @return True if the graph contains a cycle, False otherwise.
     */
 def hasCycle(graph: Graph[Int, Int]): Boolean = {
-  // Define a mutable visited set that persists across DFS invocations
-  var visited = Set[VertexId]()
-  
+
   // Define a function to perform DFS and check for cycles
-  def dfs(vertexId: VertexId, stack: Set[VertexId]): Boolean = {
+  def dfs(vertexId: VertexId, visited: Set[VertexId], stack: Set[VertexId]): (Boolean, Set[VertexId]) = {
     if (stack.contains(vertexId)) {
       // A cycle is detected if the current vertex is already in the stack
-      return true
+      return (true, visited)
     }
 
     if (visited.contains(vertexId)) {
       // If the vertex is already visited, no need to process it again
-      return false
+      return (false, visited)
     }
 
     // Mark the current node as visited and add it to the stack
-    visited += vertexId
+    val newVisited = visited + vertexId
     val newStack = stack + vertexId
 
     // Explore all neighbors of the current node
@@ -68,18 +66,26 @@ def hasCycle(graph: Graph[Int, Int]): Boolean = {
       .collect()
 
     // Recursively perform DFS on neighbors
-    for (neighbor <- neighbors) {
-      if (dfs(neighbor, newStack)) {
-        return true // Cycle detected in the recursive call
+    neighbors.foldLeft((false, newVisited)) { case ((cycleFound, currentVisited), neighbor) =>
+      if (cycleFound) (true, currentVisited)
+      else {
+        val (foundCycle, updatedVisited) = dfs(neighbor, currentVisited, newStack)
+        (foundCycle, updatedVisited)
       }
     }
-
-    // No cycle detected from this node
-    false
   }
 
-  // Check all vertices for cycles
-  graph.vertices.map(_._1).collect().exists(v => dfs(v, Set()))
+  // Extract all vertices from the graph
+  val vertices = graph.vertices.map(_._1).collect()
+
+  // Use foldLeft to process all vertices and detect cycles
+  vertices.foldLeft((false, Set[VertexId]())) { case ((cycleDetected, visited), vertex) =>
+    if (cycleDetected) (true, visited) // If a cycle is already detected, stop further processing
+    else {
+      val (foundCycle, updatedVisited) = dfs(vertex, visited, Set())
+      (foundCycle, updatedVisited)
+    }
+  }._1
 }
 
   /**

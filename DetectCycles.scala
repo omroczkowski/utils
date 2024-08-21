@@ -7,7 +7,7 @@ class DetectCycle(spark: SparkSession) {
 
   import spark.implicits._
 
-  /**
+/**
     * Method to create a directed graph from a DataFrame with specified 'id' and 'parent_id' columns.
     *
     * @param df DataFrame containing 'id' and 'parent_id' columns.
@@ -18,7 +18,7 @@ class DetectCycle(spark: SparkSession) {
   def createGraph(df: DataFrame, idCol: String, parentCol: String): Graph[Int, Int] = {
     // Create an RDD of edges for the directed graph
     val edges: RDD[Edge[Int]] = df
-      .filter(col(parentCol) =!= 0)  // Filter out rows where parent_id is 0 (if 0 indicates no parent)
+      .filter(col(parentCol) =!= 0)
       .rdd
       .map(row => Edge(row.getAs[Int](parentCol).toLong, row.getAs[Int](idCol).toLong, 1))
 
@@ -36,30 +36,31 @@ class DetectCycle(spark: SparkSession) {
   }
 
   /**
-    * Method to detect if there is a cycle in the directed graph.
+    * Method to detect if there is a cycle in the directed graph using DFS.
     *
     * @param graph A directed graph.
     * @return True if the graph contains a cycle, False otherwise.
     */
   def hasCycle(graph: Graph[Int, Int]): Boolean = {
-    val initialGraph = graph.mapVertices((id, _) => -1)
+    // Define a function to perform DFS and check for cycles
+    def dfs(vertexId: VertexId, visited: Set[VertexId], stack: Set[VertexId]): Boolean = {
+      if (stack.contains(vertexId)) {
+        // A cycle is detected if the current vertex is already in the stack
+        return true
+      }
 
-    val result = initialGraph.pregel(Int.MaxValue, activeDirection = EdgeDirection.Out)(
-      (id, oldDist, newDist) => math.min(oldDist, newDist),  // Vertex Program
-      triplet => {  // Send Message
-        if (triplet.srcAttr == -1) {
-          Iterator((triplet.dstId, triplet.srcId.toInt))
-        } else if (triplet.srcAttr == triplet.dstId.toInt) {
-          // A cycle is detected
-          Iterator((triplet.dstId, -2))
-        } else {
-          Iterator.empty
-        }
-      },
-      (a, b) => math.min(a, b)  // Merge Message
-    )
+      val newVisited = visited + vertexId
+      val newStack = stack + vertexId
 
-    result.vertices.filter { case (_, dist) => dist == -2 }.count() > 0
+      graph.edges
+        .filter(e => e.srcId == vertexId)
+        .map(e => e.dstId)
+        .collect()
+        .exists(dstId => dfs(dstId, newVisited, newStack))
+    }
+
+    // Check all vertices for cycles
+    graph.vertices.map(_._1).collect().exists(v => dfs(v, Set(), Set()))
   }
 
   /**

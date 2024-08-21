@@ -6,28 +6,15 @@ class DetectCycle(spark: SparkSession, df: DataFrame, idColumn: String, parentId
 
   import spark.implicits._
 
-  def createGraph(): Graph[Int, Int] = {
-    val edgesRDD: RDD[Edge[Int]] = df.select(idColumn, parentIdColumn)
-      .rdd
-      .map(row => (row.getLong(0), row.getLong(1)))
-      .map { case (src, dst) => Edge(src, dst, 1) }
-
-    val verticesRDD: RDD[(VertexId, Long)] = df.select(idColumn).distinct()
-      .rdd
-      .map(row => (row.getLong(0), row.getLong(0)))
-
-    Graph(verticesRDD, edgesRDD)
-  }
-
-  // Create a Graph from a DataFrame with id and parent_id columns
-  def createGraphFromDataFrame(df: DataFrame): Graph[Int, Int] = {
+  // Create a Graph from a DataFrame with parameterized id and parent_id columns
+  def createGraphFromDataFrame(df: DataFrame, idCol: String, parentIdCol: String): Graph[Int, Int] = {
     // Convert DataFrame to RDD[VertexId] and RDD[Edge[Int]]
-    val vertices: RDD[(VertexId, Int)] = df.select("id").distinct()
-      .map(row => (row.getInt(0).toLong, 0)) // 0 is a placeholder for vertex attribute, adjust as needed
+    val vertices: RDD[(VertexId, Int)] = df.select(idCol).distinct()
+      .map(row => (row.getAs[Int](idCol).toLong, 0)) // 0 is a placeholder for vertex attribute
 
-    val edges: RDD[Edge[Int]] = df.select("id", "parent_id")
+    val edges: RDD[Edge[Int]] = df.select(idCol, parentIdCol)
       .rdd
-      .map(row => Edge(row.getInt(1).toLong, row.getInt(0).toLong, 1)) // 1 is a placeholder for edge attribute, adjust as needed
+      .map(row => Edge(row.getAs[Int](parentIdCol).toLong, row.getAs[Int](idCol).toLong, 1)) // 1 is a placeholder for edge attribute
 
     // Create the graph
     Graph(vertices, edges)

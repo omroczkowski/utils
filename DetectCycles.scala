@@ -19,43 +19,22 @@ class DetectCycle(spark: SparkSession, df: DataFrame, idColumn: String, parentId
     Graph(verticesRDD, edgesRDD)
   }
 
-  def detectCycle(graph: Graph[Int, Int]): Boolean = {
-    // Function to check for cycles in a single connected component
-    def processComponent(startVertex: VertexId, visited: Set[VertexId]): Boolean = {
-      // Initialize the stack with the start vertex and an empty path stack
-      val initialStack = List((startVertex, Set(startVertex)))
-      // Iteratively process the stack
-      val (cycleDetected, _) = initialStack.foldLeft((false, visited, List[(VertexId, Set[VertexId])]())) {
-        case ((foundCycle, currentVisited, stack), (vertexId, pathStack)) =>
-          if (foundCycle) {
-            (true, currentVisited, stack)
-          } else if (pathStack.contains(vertexId)) {
-            (true, currentVisited, stack)
-          } else if (currentVisited.contains(vertexId)) {
-            (foundCycle, currentVisited, stack)
-          } else {
-            val newVisited = currentVisited + vertexId
-            val neighbors = graph.edges.filter(e => e.srcId == vertexId).map(e => e.dstId).collect()
-            val newStack = neighbors.map(neighbor => (neighbor, pathStack + neighbor)).toList
-            (foundCycle, newVisited, newStack ++ stack)
-          }
-      }
-      cycleDetected
-    }
+object GraphCyclicChecker {
+  def isCyclic(graph: Graph[_, _]): Boolean = {
+    // Compute Strongly Connected Components
+    val sccGraph = graph.stronglyConnectedComponents(1)
+    
+    // Extract the SCCs by collecting their vertices
+    val sccs: RDD[(VertexId, VertexId)] = sccGraph.vertices
 
-    // Collect all vertices and process each component
-    val vertices = graph.vertices.map(_._1).collect()
-    val initialState = (false, Set[VertexId]())
-    val finalState = vertices.foldLeft(initialState) { case ((foundCycle, visited), vertex) =>
-      if (foundCycle) {
-        (true, visited)
-      } else if (visited.contains(vertex)) {
-        (foundCycle, visited)
-      } else {
-        val cycleFound = processComponent(vertex, visited)
-        (foundCycle || cycleFound, visited + vertex)
-      }
-    }
-    finalState._1
+    // Check if any SCC contains more than one node
+    val sccSizes: RDD[Long] = sccs.map { case (_, componentId) =>
+      (componentId, 1L)
+    }.reduceByKey(_ + _)
+    
+    // If any SCC has more than one node, then there is a cycle
+    val hasCycle = sccSizes.map(_._2).filter(_ > 1).count() > 0
+
+    hasCycle
   }
 }

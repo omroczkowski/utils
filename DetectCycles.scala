@@ -26,22 +26,22 @@ class DetectCycle(spark: SparkSession, df: DataFrame, idColumn: String, parentId
   }
 
   // Check if the graph is cyclic
-  def isCyclic(graph: Graph[Int, Int]): Boolean = {
-    // Compute Strongly Connected Components
-    val sccGraph: Graph[Int, Int] = graph.stronglyConnectedComponents(1)
-    
-    // Extract the SCCs by collecting their vertices
-    val sccs: RDD[(VertexId, VertexId)] = sccGraph.vertices
+def isCyclic(graph: Graph[Int, Int]): Boolean = {
+  // Compute Strongly Connected Components
+  val sccGraph: Graph[VertexId, Int] = graph.stronglyConnectedComponents(Int.MaxValue)
 
-    // Check if any SCC contains more than one node
-    val sccSizes: RDD[(VertexId, Long)] = sccs.map { case (_, componentId) =>
-      (componentId, 1L)
-    }.reduceByKey(_ + _)
-    
-    // If any SCC has more than one node, then there is a cycle
-    val hasCycle: Boolean = sccSizes.map(_._2).filter(_ > 1).count() > 0
+  // Extract the SCCs by collecting their vertices
+  val sccs: RDD[(VertexId, VertexId)] = sccGraph.vertices
 
-    hasCycle
-  }
+  // Count the size of each SCC
+  val sccSizes: RDD[(VertexId, Long)] = sccs.map { case (_, componentId) =>
+    (componentId, 1L)
+  }.reduceByKey(_ + _)
+
+  // If any SCC has more than one node, then there is a cycle
+  val hasCycle: Boolean = sccSizes.filter(_._2 > 1).count() > 0
+
+  hasCycle
+}
 }
 }

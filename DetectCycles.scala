@@ -1,103 +1,61 @@
-import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.graphx._
-import org.apache.spark.sql.functions._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{DataFrame, SparkSession}
 
-class DetectCycle(spark: SparkSession) {
+class DetectCycle(spark: SparkSession, df: DataFrame, idColumn: String, parentIdColumn: String) {
 
   import spark.implicits._
 
-/**
-    * Method to create a directed graph from a DataFrame with specified 'id' and 'parent_id' columns.
-    *
-    * @param df DataFrame containing 'id' and 'parent_id' columns.
-    * @param idCol Name of the column representing node IDs.
-    * @param parentCol Name of the column representing parent node IDs.
-    * @return A directed graph.
-    */
-  def createGraph(df: DataFrame, idCol: String, parentCol: String): Graph[Int, Int] = {
-    // Create an RDD of edges for the directed graph
-    val edges: RDD[Edge[Int]] = df
-      .filter(col(parentCol) =!= 0)
+  def createGraph(): Graph[Int, Int] = {
+    val edgesRDD: RDD[Edge[Int]] = df.select(idColumn, parentIdColumn)
       .rdd
-      .map(row => Edge(row.getAs[Int](parentCol).toLong, row.getAs[Int](idCol).toLong, 1))
+      .map(row => (row.getLong(0), row.getLong(1)))
+      .map { case (src, dst) => Edge(src, dst, 1) }
 
-    // Create an RDD of vertices
-    val vertices: RDD[(VertexId, Int)] = df
+    val verticesRDD: RDD[(VertexId, Long)] = df.select(idColumn).distinct()
       .rdd
-      .flatMap(row => Seq(
-        (row.getAs[Int](idCol).toLong, row.getAs[Int](idCol)),
-        (row.getAs[Int](parentCol).toLong, row.getAs[Int](parentCol))
-      ))
-      .distinct()
+      .map(row => (row.getLong(0), row.getLong(0)))
 
-    // Create the directed graph
-    Graph(vertices, edges)
+    Graph(verticesRDD, edgesRDD)
   }
 
-  /**
-    * Method to detect if there is a cycle in the directed graph using DFS.
-    *
-    * @param graph A directed graph.
-    * @return True if the graph contains a cycle, False otherwise.
-    */
-def hasCycle(graph: Graph[Int, Int]): Boolean = {
-
-  // Define a function to perform DFS and check for cycles
-  def dfs(vertexId: VertexId, visited: Set[VertexId], stack: Set[VertexId]): (Boolean, Set[VertexId]) = {
-    if (stack.contains(vertexId)) {
-      // A cycle is detected if the current vertex is already in the stack
-      return (true, visited)
+  def detectCycle(graph: Graph[Int, Int]): Boolean = {
+    // Function to check for cycles in a single connected component
+    def processComponent(startVertex: VertexId, visited: Set[VertexId]): Boolean = {
+      // Initialize the stack with the start vertex and an empty path stack
+      val initialStack = List((startVertex, Set(startVertex)))
+      // Iteratively process the stack
+      val (cycleDetected, _) = initialStack.foldLeft((false, visited, List[(VertexId, Set[VertexId])]())) {
+        case ((foundCycle, currentVisited, stack), (vertexId, pathStack)) =>
+          if (foundCycle) {
+            (true, currentVisited, stack)
+          } else if (pathStack.contains(vertexId)) {
+            (true, currentVisited, stack)
+          } else if (currentVisited.contains(vertexId)) {
+            (foundCycle, currentVisited, stack)
+          } else {
+            val newVisited = currentVisited + vertexId
+            val neighbors = graph.edges.filter(e => e.srcId == vertexId).map(e => e.dstId).collect()
+            val newStack = neighbors.map(neighbor => (neighbor, pathStack + neighbor)).toList
+            (foundCycle, newVisited, newStack ++ stack)
+          }
+      }
+      cycleDetected
     }
 
-    if (visited.contains(vertexId)) {
-      // If the vertex is already visited, no need to process it again
-      return (false, visited)
-    }
-
-    // Mark the current node as visited and add it to the stack
-    val newVisited = visited + vertexId
-    val newStack = stack + vertexId
-
-    // Explore all neighbors of the current node
-    val neighbors = graph.edges
-      .filter(e => e.srcId == vertexId)
-      .map(e => e.dstId)
-      .collect()
-
-    // Recursively perform DFS on neighbors
-    neighbors.foldLeft((false, newVisited)) { case ((cycleFound, currentVisited), neighbor) =>
-      if (cycleFound) (true, currentVisited)
-      else {
-        val (foundCycle, updatedVisited) = dfs(neighbor, currentVisited, newStack)
-        (foundCycle, updatedVisited)
+    // Collect all vertices and process each component
+    val vertices = graph.vertices.map(_._1).collect()
+    val initialState = (false, Set[VertexId]())
+    val finalState = vertices.foldLeft(initialState) { case ((foundCycle, visited), vertex) =>
+      if (foundCycle) {
+        (true, visited)
+      } else if (visited.contains(vertex)) {
+        (foundCycle, visited)
+      } else {
+        val cycleFound = processComponent(vertex, visited)
+        (foundCycle || cycleFound, visited + vertex)
       }
     }
-  }
-
-  // Extract all vertices from the graph
-  val vertices = graph.vertices.map(_._1).collect()
-
-  // Use foldLeft to process all vertices and detect cycles
-  vertices.foldLeft((false, Set[VertexId]())) { case ((cycleDetected, visited), vertex) =>
-    if (cycleDetected) (true, visited) // If a cycle is already detected, stop further processing
-    else {
-      val (foundCycle, updatedVisited) = dfs(vertex, visited, Set())
-      (foundCycle, updatedVisited)
-    }
-  }._1
-}
-
-  /**
-    * Method that combines graph creation and cycle detection.
-    *
-    * @param df DataFrame containing 'id' and 'parent_id' columns.
-    * @param idCol Name of the column representing node IDs.
-    * @param parentCol Name of the column representing parent node IDs.
-    * @return True if the graph contains a cycle, False otherwise.
-    */
-  def detectCycle(df: DataFrame, idCol: String, parentCol: String): Boolean = {
-    val graph = createGraph(df, idCol, parentCol)
-    hasCycle(graph)
+    finalState._1
   }
 }

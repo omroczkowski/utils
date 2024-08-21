@@ -41,27 +41,46 @@ class DetectCycle(spark: SparkSession) {
     * @param graph A directed graph.
     * @return True if the graph contains a cycle, False otherwise.
     */
-  def hasCycle(graph: Graph[Int, Int]): Boolean = {
-    // Define a function to perform DFS and check for cycles
-    def dfs(vertexId: VertexId, visited: Set[VertexId], stack: Set[VertexId]): Boolean = {
-      if (stack.contains(vertexId)) {
-        // A cycle is detected if the current vertex is already in the stack
-        return true
-      }
-
-      val newVisited = visited + vertexId
-      val newStack = stack + vertexId
-
-      graph.edges
-        .filter(e => e.srcId == vertexId)
-        .map(e => e.dstId)
-        .collect()
-        .exists(dstId => dfs(dstId, newVisited, newStack))
+def hasCycle(graph: Graph[Int, Int]): Boolean = {
+  // Define a mutable visited set that persists across DFS invocations
+  var visited = Set[VertexId]()
+  
+  // Define a function to perform DFS and check for cycles
+  def dfs(vertexId: VertexId, stack: Set[VertexId]): Boolean = {
+    if (stack.contains(vertexId)) {
+      // A cycle is detected if the current vertex is already in the stack
+      return true
     }
 
-    // Check all vertices for cycles
-    graph.vertices.map(_._1).collect().exists(v => dfs(v, Set(), Set()))
+    if (visited.contains(vertexId)) {
+      // If the vertex is already visited, no need to process it again
+      return false
+    }
+
+    // Mark the current node as visited and add it to the stack
+    visited += vertexId
+    val newStack = stack + vertexId
+
+    // Explore all neighbors of the current node
+    val neighbors = graph.edges
+      .filter(e => e.srcId == vertexId)
+      .map(e => e.dstId)
+      .collect()
+
+    // Recursively perform DFS on neighbors
+    for (neighbor <- neighbors) {
+      if (dfs(neighbor, newStack)) {
+        return true // Cycle detected in the recursive call
+      }
+    }
+
+    // No cycle detected from this node
+    false
   }
+
+  // Check all vertices for cycles
+  graph.vertices.map(_._1).collect().exists(v => dfs(v, Set()))
+}
 
   /**
     * Method that combines graph creation and cycle detection.

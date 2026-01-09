@@ -1,49 +1,56 @@
-import org.scalatest.FeatureSpecLike
-import org.scalatest.GivenWhenThen
-import org.scalatest.matchers.should.Matchers
-import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions._
-import com.company.testing.{DataFrameTestHelper, SparkSessionTestBase} // adjust package
-import your.package.IssVotingReport // replace with actual package
+scenario("weefinAssignCarbonIntensity resolves carbon intensity including null ESG framework") {
 
-class IssVotingReportTest
-  extends DataFrameTestHelper
-    with FeatureSpecLike
-    with GivenWhenThen
-    with Matchers
-    with SparkSessionTestBase {
+  Given("Input KPIs with corporate, sovereign, missing and null ESG framework carbon intensity")
 
-  scenario("black box test: should clean KPI columns and cast to double") {
+  val inputDf = List(
+    // --- corporate carbon intensity
+    (daliId1, corporateIssuerTypeColumn, co2IntensityTco2eUsdMnRevenuesColName, "10.0"),
 
-    Given("sample voting report input with commas and whitespace")
-    val result = IssVotingReportTest.runJob(spark)
+    // --- sovereign carbon intensity
+    (daliId2, sovereignIssuerTypeColumn, carbonIntensityColName, "20.0"),
 
-    Then("we get cleaned and casted output")
-    assertDataFramesEquals(IssVotingReportTest.expected, result)
-  }
-}
+    // --- missing carbon intensity → NOT_RATED
+    (daliId3, corporateIssuerTypeColumn, renewableEnergyColName, "1.0"),
 
-object IssVotingReportTest extends SparkSessionTestBase {
-  import spark.implicits._
-
-  val date = "2025-08-04"
-
-  val inputDf: DataFrame = List(
-    ("entity1", " 1,000.5 ", " 2,500 ", date),
-    ("entity2", "3,200.75", " 4,100", date)
-  ).toDF("entity_id", "kpi1", "kpi2", "ingestion_date")
-
-  val inputs: Map[String, DataFrame] = Map(
-    "voting_report" -> inputDf
+    // --- null ESG framework → NOT_APPLICABLE
+    (daliId4, null, carbonIntensityColName, "999.0")
+  ).toDF(
+    daliIdColName,
+    esgFrameworkColName,
+    kpiNameColName,
+    kpiValueColName
   )
 
-  val expected: DataFrame = List(
-    ("entity1", 1000.5, 2500.0, date),
-    ("entity2", 3200.75, 4100.0, date)
-  ).toDF("entity_id", "kpi1", "kpi2", "ingestion_date")
+  When("weefinAssignCarbonIntensity is executed")
 
-  def runJob(spark: SparkSession): DataFrame = {
-    val job = new IssVotingReport(Map.empty)(spark)
-    job.run(inputs)("voting_report")
-  }
+  val computedDf =
+    new SecurityKpiDataFrameHelper(inputDf)
+      .weefinAssignCarbonIntensity()
+      .select(daliIdColName, kpiNameColName, kpiValueColName)
+
+  Then("Carbon intensity KPI is correctly assigned for all cases")
+
+  val expectedDf = List(
+    // preserved values
+    (daliId1, kpiCarbonIntensityColName, "10.0"),
+    (daliId2, kpiCarbonIntensityColName, "20.0"),
+
+    // filled by fill_carbon_intensity_kpi
+    (daliId3, kpiCarbonIntensityColName, notRated),
+
+    // null ESG framework → NOT_APPLICABLE
+    (daliId4, kpiCarbonIntensityColName, notApplicable),
+
+    // non-carbon KPI preserved
+    (daliId3, renewableEnergyColName, "1.0")
+  ).toDF(
+    daliIdColName,
+    kpiNameColName,
+    kpiValueColName
+  )
+
+  assertDataFrameEquals(
+    expectedDf.orderBy(daliIdColName, kpiNameColName),
+    computedDf.orderBy(daliIdColName, kpiNameColName)
+  )
 }
